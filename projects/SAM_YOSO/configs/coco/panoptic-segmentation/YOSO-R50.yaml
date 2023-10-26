@@ -1,0 +1,76 @@
+MODEL:
+  PIXEL_MEAN: [123.675, 116.280, 103.530]
+  PIXEL_STD: [58.395, 57.120, 57.375]
+  META_ARCHITECTURE: "YOSO"
+  BACKBONE:
+    FREEZE_AT: 0
+    NAME: "build_resnet_backbone"
+  RESNETS:
+    DEPTH: 50
+    STRIDE_IN_1X1: False
+    OUT_FEATURES: ["res2", "res3", "res4", "res5"]
+  WEIGHTS: "detectron2://ImageNetPretrained/torchvision/R-50.pkl"
+  YOSO:
+    SIZE_DIVISIBILITY: 32
+    # Structure
+    NUM_CLASSES: 133
+    NUM_STAGES: 2
+    IN_FEATURES: ["res2", "res3", "res4", "res5"]
+    HIDDEN_DIM: 256
+    NUM_PROPOSALS: 100
+    CONV_KERNEL_SIZE_2D: 1
+    CONV_KERNEL_SIZE_1D: 3
+    NUM_CLS_FCS: 1
+    NUM_MASK_FCS: 1
+    # Loss
+    NO_OBJECT_WEIGHT: 0.1
+    CLASS_WEIGHT: 2.0
+    MASK_WEIGHT: 5.0
+    DICE_WEIGHT: 5.0
+    TRAIN_NUM_POINTS: 12544
+    OVERSAMPLE_RATIO: 3.0
+    IMPORTANCE_SAMPLE_RATIO: 0.75
+    TEMPERATIRE: 0.05
+    TEST:
+      SEMANTIC_ON: False
+      INSTANCE_ON: False
+      PANOPTIC_ON: True
+      OVERLAP_THRESHOLD: 0.8
+      OBJECT_MASK_THRESHOLD: 0.7 
+
+DATASETS:
+  TRAIN: ("coco_2017_train_panoptic",)
+  TEST: ("coco_2017_val_panoptic_with_sem_seg",)
+
+SOLVER:
+  IMS_PER_BATCH: 16
+  BASE_LR: 0.0001
+  STEPS: (327778, 355092)
+  MAX_ITER: 368750
+  WARMUP_FACTOR: 1.0
+  WARMUP_ITERS: 10
+  WEIGHT_DECAY: 0.05
+  OPTIMIZER: "ADAMW"
+  BACKBONE_MULTIPLIER: 0.1
+  CLIP_GRADIENTS:
+    ENABLED: True
+    CLIP_TYPE: "full_model"
+    CLIP_VALUE: 0.01
+    NORM_TYPE: 2.0
+  AMP:
+    ENABLED: False
+INPUT:
+  IMAGE_SIZE: 1024
+  MIN_SCALE: 0.1
+  MAX_SCALE: 2.0
+  FORMAT: "RGB"
+  DATASET_MAPPER_NAME: "yoso_panoptic_lsj"
+  MIN_SIZE_TEST: 800 # 550 #512
+  MAX_SIZE_TEST: 1333 # 800 #800
+TEST:
+  EVAL_PERIOD: 5000
+DATALOADER:
+  FILTER_EMPTY_ANNOTATIONS: True
+  NUM_WORKERS: 4
+VERSION: 2
+OUTPUT_DIR: "output/yoso_resnet50_panoptic_seg_coco"
