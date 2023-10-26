@@ -1,6 +1,7 @@
 import os
 import copy
 import torch
+import weakref
 import logging
 import itertools
 from collections import OrderedDict
@@ -27,17 +28,26 @@ from detectron2.evaluation import (
     SemSegEvaluator,
     verify_results,
 )
+from detectron2.engine import (
+    DefaultTrainer,
+    default_argument_parser,
+    default_setup,
+    hooks,
+    launch,
+    create_ddp_model,
+    AMPTrainer,
+    SimpleTrainer
+)
 from yoso.utils import InstanceSegEvaluator, build_lr_scheduler
 from yoso import (
-    YOSOInstanceLSJDatasetMapper,
-    YOSOPanopticLSJDatasetMapper,
-    YOSOInstanceDatasetMapper,
-    YOSOPanopticDatasetMapper,
-    YOSOSemanticDatasetMapper,
-    SemanticSegmentorWithTTA,
     add_yoso_config,
+    add_sam_yoso_config,
 )
-
+from datasets import (
+    build_train_dataloader,
+    build_evaluator,
+    build_eval_dataloader,
+)
 
 class Trainer(DefaultTrainer):
     """
@@ -46,106 +56,16 @@ class Trainer(DefaultTrainer):
 
     @classmethod
     def build_evaluator(cls, cfg, dataset_name, output_folder=None):
-        """
-        Create evaluator(s) for a given dataset.
-        This uses the special metadata "evaluator_type" associated with each
-        builtin dataset. For your own dataset, you can simply create an
-        evaluator manually in your script and do not have to worry about the
-        hacky if-else logic here.
-        """
-        if output_folder is None:
-            output_folder = os.path.join(cfg.OUTPUT_DIR, "inference")
-        evaluator_list = []
-        evaluator_type = MetadataCatalog.get(dataset_name).evaluator_type
-
-        # Panoptic Segmentation
-        if evaluator_type in [
-            "coco_panoptic_seg",
-            "ade20k_panoptic_seg",
-            "cityscapes_panoptic_seg",
-            "mapillary_vistas_panoptic_seg",
-        ]:
-            if cfg.MODEL.YOSO.TEST.PANOPTIC_ON:
-                evaluator_list.append(COCOPanopticEvaluator(dataset_name, output_folder))
-        # COCO
-        if evaluator_type == "coco_panoptic_seg":
-            if cfg.MODEL.YOSO.TEST.INSTANCE_ON:
-                evaluator_list.append(COCOEvaluator(dataset_name, output_dir=output_folder))
-            if cfg.MODEL.YOSO.TEST.SEMANTIC_ON:
-                evaluator_list.append(SemSegEvaluator(dataset_name, distributed=True, output_dir=output_folder))
-        # Mapillary Vistas
-        if evaluator_type == "mapillary_vistas_panoptic_seg":
-            if cfg.MODEL.YOSO.TEST.INSTANCE_ON:
-                evaluator_list.append(InstanceSegEvaluator(dataset_name, output_dir=output_folder))
-            if cfg.MODEL.YOSO.TEST.SEMANTIC_ON:
-                evaluator_list.append(SemSegEvaluator(dataset_name, distributed=True, output_dir=output_folder))
-        # Cityscapes
-        # if evaluator_type == "cityscapes_instance":
-        #     assert (
-        #         torch.cuda.device_count() > comm.get_rank()
-        #     ), "CityscapesEvaluator currently do not work with multiple machines."
-        #     return CityscapesInstanceEvaluator(dataset_name)
-        # if evaluator_type == "cityscapes_sem_seg":
-        #     assert (
-        #         torch.cuda.device_count() > comm.get_rank()
-        #     ), "CityscapesEvaluator currently do not work with multiple machines."
-        #     return CityscapesSemSegEvaluator(dataset_name)
-        if evaluator_type == "cityscapes_panoptic_seg":
-            if cfg.MODEL.YOSO.TEST.SEMANTIC_ON:
-                assert (
-                    torch.cuda.device_count() > comm.get_rank()
-                ), "CityscapesEvaluator currently do not work with multiple machines."
-                evaluator_list.append(CityscapesSemSegEvaluator(dataset_name))
-            if cfg.MODEL.YOSO.TEST.INSTANCE_ON:
-                assert (
-                    torch.cuda.device_count() > comm.get_rank()
-                ), "CityscapesEvaluator currently do not work with multiple machines."
-                evaluator_list.append(CityscapesInstanceEvaluator(dataset_name))
-        # ADE20K
-        if evaluator_type == "ade20k_panoptic_seg":
-            if cfg.MODEL.YOSO.TEST.INSTANCE_ON:
-                evaluator_list.append(InstanceSegEvaluator(dataset_name, output_dir=output_folder))
-            if cfg.MODEL.YOSO.TEST.SEMANTIC_ON:
-                evaluator_list.append(SemSegEvaluator(dataset_name,distributed=True,output_dir=output_folder))
-
-        # LVIS
-        # if evaluator_type == "lvis":
-        #     return LVISEvaluator(dataset_name, output_dir=output_folder)
-        if len(evaluator_list) == 0:
-            raise NotImplementedError(
-                "no Evaluator for the dataset {} with the type {}".format(
-                    dataset_name, evaluator_type
-                )
-            )
-        elif len(evaluator_list) == 1:
-            return evaluator_list[0]
-        return DatasetEvaluators(evaluator_list)
+        return build_evaluator(cfg, dataset_name, output_folder=output_folder)
 
     @classmethod
     def build_train_loader(cls, cfg):
-        # Semantic segmentation dataset mapper
-        if cfg.INPUT.DATASET_MAPPER_NAME == "yoso_semantic":
-            mapper = YOSOSemanticDatasetMapper(cfg, True)
-            return build_detection_train_loader(cfg, mapper=mapper)
-        # Panoptic segmentation dataset mapper
-        elif cfg.INPUT.DATASET_MAPPER_NAME == "yoso_panoptic":
-            mapper = YOSOPanopticDatasetMapper(cfg, True)
-            return build_detection_train_loader(cfg, mapper=mapper)
-        # Instance segmentation dataset mapper
-        elif cfg.INPUT.DATASET_MAPPER_NAME == "yoso_instance":
-            mapper = YOSOInstanceDatasetMapper(cfg, True)
-            return build_detection_train_loader(cfg, mapper=mapper)
-        # coco instance segmentation lsj new baseline
-        elif cfg.INPUT.DATASET_MAPPER_NAME == "yoso_instance_lsj":
-            mapper = YOSOInstanceLSJDatasetMapper(cfg, True)
-            return build_detection_train_loader(cfg, mapper=mapper)
-        # coco panoptic segmentation lsj new baseline
-        elif cfg.INPUT.DATASET_MAPPER_NAME == "yoso_panoptic_lsj":
-            mapper = YOSOPanopticLSJDatasetMapper(cfg, True)
-            return build_detection_train_loader(cfg, mapper=mapper)
-        else:
-            mapper = None
-            return build_detection_train_loader(cfg, mapper=mapper)
+        return build_train_dataloader(cfg, )
+    
+    @classmethod
+    def build_test_loader(cls, cfg, dataset_name):
+        loader = build_eval_dataloader(cfg, )
+        return loader
 
     @classmethod
     def build_lr_scheduler(cls, cfg, optimizer):
@@ -237,21 +157,21 @@ class Trainer(DefaultTrainer):
             optimizer = maybe_add_gradient_clipping(cfg, optimizer)
         return optimizer
 
-    @classmethod
-    def test_with_TTA(cls, cfg, model):
-        logger = logging.getLogger("detectron2.trainer")
-        # In the end of training, run an evaluation with TTA.
-        logger.info("Running inference with test-time augmentation ...")
-        model = SemanticSegmentorWithTTA(cfg, model)
-        evaluators = [
-            cls.build_evaluator(
-                cfg, name, output_folder=os.path.join(cfg.OUTPUT_DIR, "inference_TTA")
-            )
-            for name in cfg.DATASETS.TEST
-        ]
-        res = cls.test(cfg, model, evaluators)
-        res = OrderedDict({k + "_TTA": v for k, v in res.items()})
-        return res
+    # @classmethod
+    # def test_with_TTA(cls, cfg, model):
+    #     logger = logging.getLogger("detectron2.trainer")
+    #     # In the end of training, run an evaluation with TTA.
+    #     logger.info("Running inference with test-time augmentation ...")
+    #     model = SemanticSegmentorWithTTA(cfg, model)
+    #     evaluators = [
+    #         cls.build_evaluator(
+    #             cfg, name, output_folder=os.path.join(cfg.OUTPUT_DIR, "inference_TTA")
+    #         )
+    #         for name in cfg.DATASETS.TEST
+    #     ]
+    #     res = cls.test(cfg, model, evaluators)
+    #     res = OrderedDict({k + "_TTA": v for k, v in res.items()})
+    #     return res
 
 
 def setup(args):
@@ -260,6 +180,7 @@ def setup(args):
     """
     cfg = get_cfg()
     add_yoso_config(cfg)
+    add_sam_yoso_config(cfg)
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
     cfg.freeze()

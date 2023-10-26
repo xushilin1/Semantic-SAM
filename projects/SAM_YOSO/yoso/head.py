@@ -13,6 +13,7 @@ from torch import nn
 from typing import Optional, List
 from torch import nn, Tensor
 
+from semantic_sam.body.decoder.utils import inverse_sigmoid, MLP, gen_sineembed_for_position
 
 class FFN(nn.Module):
     def __init__(self, embed_dims=256, feedforward_channels=1024, num_fcs=2, add_identity=True):
@@ -45,180 +46,94 @@ class FFN(nn.Module):
         return identity + self.dropout_layer(out)
 
 
-class MultiHeadCrossAtten(nn.Module):
-    def __init__(self, cfg):
-        super(MultiHeadCrossAtten, self).__init__()
-        self.hidden_dim = cfg.MODEL.YOSO.HIDDEN_DIM
-        self.num_proposals = cfg.MODEL.YOSO.NUM_PROPOSALS
-        self.conv_kernel_size_1d = cfg.MODEL.YOSO.CONV_KERNEL_SIZE_1D
-        self.conv_kernel_size_2d = cfg.MODEL.YOSO.CONV_KERNEL_SIZE_2D
+class KernelUpdator(nn.Module):
 
-        self.atten = nn.MultiheadAttention(embed_dim=self.hidden_dim * self.conv_kernel_size_2d**2, num_heads=8, dropout=0.0)
-        self.f_norm = nn.LayerNorm(self.hidden_dim)
+    def __init__(self,
+                 in_channels=256,
+                 feat_channels=64,
+                 out_channels=None,
+                 input_feat_shape=3,
+                 gate_sigmoid=True,
+                 gate_norm_act=False,
+                 activate_out=False,
+                 act_cfg=dict(type='ReLU', inplace=True),
+                 norm_cfg=dict(type='LN')):
+        super(KernelUpdator, self).__init__()
+        self.in_channels = in_channels
+        self.feat_channels = feat_channels
+        self.out_channels_raw = out_channels
+        self.gate_sigmoid = gate_sigmoid
+        self.gate_norm_act = gate_norm_act
+        self.activate_out = activate_out
+        if isinstance(input_feat_shape, int):
+            input_feat_shape = [input_feat_shape] * 2
+        self.input_feat_shape = input_feat_shape
+        self.act_cfg = act_cfg
+        self.norm_cfg = norm_cfg
+        self.out_channels = out_channels if out_channels else in_channels
 
-    def forward(self, query, value):
-        query = query.permute(1, 0, 2)
-        value = value.permute(1, 0, 2)
+        self.num_params_in = self.feat_channels
+        self.num_params_out = self.feat_channels
+        self.dynamic_layer = nn.Linear(
+            self.in_channels, self.num_params_in + self.num_params_out)
+        self.input_layer = nn.Linear(self.in_channels,
+                                     self.num_params_in + self.num_params_out,
+                                     1)
+        self.input_gate = nn.Linear(self.in_channels, self.feat_channels, 1)
+        self.update_gate = nn.Linear(self.in_channels, self.feat_channels, 1)
+        if self.gate_norm_act:
+            self.gate_norm = nn.LayerNorm(self.feat_channels)
 
-        out = self.atten(query, value, value)[0]
-        out = out.permute(1, 0, 2)
-        out = self.f_norm(out)
-        return out
+        self.norm_in = nn.LayerNorm(self.feat_channels)
+        self.norm_out = nn.LayerNorm(self.feat_channels)
+        self.input_norm_in = nn.LayerNorm(self.feat_channels)
+        self.input_norm_out = nn.LayerNorm(self.feat_channels)
 
+        self.activation = nn.ReLU()
 
-class DyConvAtten(nn.Module):
-    def __init__(self, cfg):
-        super(DyConvAtten, self).__init__()
-        self.hidden_dim = cfg.MODEL.YOSO.HIDDEN_DIM
-        self.num_proposals = cfg.MODEL.YOSO.NUM_PROPOSALS
-        self.conv_kernel_size_1d = cfg.MODEL.YOSO.CONV_KERNEL_SIZE_1D
+        self.fc_layer = nn.Linear(self.feat_channels, self.out_channels, 1)
+        self.fc_norm = nn.LayerNorm(self.feat_channels)
 
-        self.f_linear = nn.Linear(self.hidden_dim, self.num_proposals * self.conv_kernel_size_1d)
-        self.f_norm = nn.LayerNorm(self.hidden_dim)
-
-    def forward(self, f, k):
-        # f: [B, N, C]
-        # k: [B, N, C * K * K]
-        B = f.shape[0]
-        weight = self.f_linear(f)
-        weight = weight.view(B, self.num_proposals, self.num_proposals, self.conv_kernel_size_1d)
-        res = []
-        for i in range(B):
-            # input: [1, N, C * K * K]
-            # weight: [N, N, convK]
-            # output: [1, N, C * K * K]
-            out = F.conv1d(input=k.unsqueeze(1)[i], weight=weight[i], padding='same')
-            res.append(out)
-        # [B, N, C * K * K] 
-        f_tmp = torch.cat(res, dim=0) #.permute(1, 0, 2).reshape(self.num_proposals, B, self.hidden_dim)
-        f_tmp = self.f_norm(f_tmp)
-        # [N, B, C * K * K]
-        # f_tmp = f_tmp.permute(1, 0, 2)
-        return f_tmp
-
-
-class DySepConvAtten(nn.Module):
-    def __init__(self, cfg):
-        super(DySepConvAtten, self).__init__()
-        self.hidden_dim = cfg.MODEL.YOSO.HIDDEN_DIM
-        self.num_proposals = cfg.MODEL.YOSO.NUM_PROPOSALS
-        self.kernel_size = cfg.MODEL.YOSO.CONV_KERNEL_SIZE_1D
-
-        # self.depth_weight_linear = nn.Linear(hidden_dim, kernel_size)
-        # self.point_weigth_linear = nn.Linear(hidden_dim, num_proposals)
-        self.weight_linear = nn.Linear(self.hidden_dim, self.num_proposals + self.kernel_size)
-        self.norm = nn.LayerNorm(self.hidden_dim)
-
-    def forward(self, query, value):
-        assert query.shape == value.shape
-        B, N, C = query.shape
+    def forward(self, update_feature, input_feature):
+        """
+        Args:
+            update_feature (torch.Tensor): [bs, num_proposals, in_channels]
+            input_feature (torch.Tensor): [bs, num_proposals, in_channels]
+        """
+        bs, num_proposals, _ = update_feature.shape
         
-        # dynamic depth-wise conv
-        # dy_depth_conv_weight = self.depth_weight_linear(query).view(B, self.num_proposals, 1,self.kernel_size) # B, N, 1, K
-        # dy_point_conv_weight = self.point_weigth_linear(query).view(B, self.num_proposals, self.num_proposals, 1)
+        parameters = self.dynamic_layer(update_feature)
+        param_in = parameters[..., :self.num_params_in]
+        param_out = parameters[..., -self.num_params_out:]
 
-        dy_conv_weight = self.weight_linear(query)
-        dy_depth_conv_weight = dy_conv_weight[:, :, :self.kernel_size].view(B,self.num_proposals,1,self.kernel_size)
-        dy_point_conv_weight = dy_conv_weight[:, :, self.kernel_size:].view(B,self.num_proposals,self.num_proposals,1)
+        input_feats = self.input_layer(input_feature)
+        input_in = input_feats[..., :self.num_params_in]
+        input_out = input_feats[..., -self.num_params_out:]
 
-        res = []
-        value = value.unsqueeze(1)
-        for i in range(B):
-            # input: [1, N, C]
-            # weight: [N, 1, K]
-            # output: [1, N, C]
-            out = F.relu(F.conv1d(input=value[i], weight=dy_depth_conv_weight[i], groups=N, padding="same"))
-            # input: [1, N, C]
-            # weight: [N, N, 1]
-            # output: [1, N, C]
-            out = F.conv1d(input=out, weight=dy_point_conv_weight[i], padding='same')
+        gate_feats = input_in * param_in
+        if self.gate_norm_act:
+            gate_feats = self.activation(self.gate_norm(gate_feats))
 
-            res.append(out)
-        point_out = torch.cat(res, dim=0)
-        point_out = self.norm(point_out)
-        return point_out
+        input_gate = self.input_norm_in(self.input_gate(gate_feats))
+        update_gate = self.norm_in(self.update_gate(gate_feats))
+        if self.gate_sigmoid:
+            input_gate = input_gate.sigmoid()
+            update_gate = update_gate.sigmoid()
+        param_out = self.norm_out(param_out)
+        input_out = self.input_norm_out(input_out)
 
+        if self.activate_out:
+            param_out = self.activation(param_out)
+            input_out = self.activation(input_out)
 
-class DyDepthwiseConvAtten(nn.Module):
-    def __init__(self, cfg):
-        super(DyDepthwiseConvAtten, self).__init__()
-        self.hidden_dim = cfg.MODEL.YOSO.HIDDEN_DIM
-        self.num_proposals = cfg.MODEL.YOSO.NUM_PROPOSALS
-        self.kernel_size = cfg.MODEL.YOSO.CONV_KERNEL_SIZE_1D
+        # param_out has shape (batch_size, feat_channels, out_channels)
+        features = update_gate * param_out + input_gate * input_out
 
-        # self.depth_weight_linear = nn.Linear(hidden_dim, kernel_size)
-        # self.point_weigth_linear = nn.Linear(hidden_dim, num_proposals)
-        self.weight_linear = nn.Linear(self.hidden_dim, self.kernel_size)
-        self.norm = nn.LayerNorm(self.hidden_dim)
+        features = self.fc_layer(features)
+        features = self.fc_norm(features)
+        features = self.activation(features)
 
-
-    def forward(self, query, value):
-        assert query.shape == value.shape
-        B, N, C = query.shape
-        
-        # dynamic depth-wise conv
-        # dy_depth_conv_weight = self.depth_weight_linear(query).view(B, self.num_proposals, 1,self.kernel_size) # B, N, 1, K
-        # dy_point_conv_weight = self.point_weigth_linear(query).view(B, self.num_proposals, self.num_proposals, 1)
-        dy_conv_weight = self.weight_linear(query).view(B,self.num_proposals,1,self.kernel_size)
-        # dy_depth_conv_weight = dy_conv_weight[:, :, :self.kernel_size].view(B,self.num_proposals,1,self.kernel_size)
-        # dy_point_conv_weight = dy_conv_weight[:, :, self.kernel_size:].view(B,self.num_proposals,self.num_proposals,1)
-
-        res = []
-        value = value.unsqueeze(1)
-        for i in range(B):
-            # input: [1, N, C]
-            # weight: [N, 1, K]
-            # output: [1, N, C]
-            out = F.conv1d(input=value[i], weight=dy_conv_weight[i], groups=N, padding="same")
-            # input: [1, N, C]
-            # weight: [N, N, 1]
-            # output: [1, N, C]
-            # out = F.conv1d(input=out, weight=dy_point_conv_weight[i], padding='same')
-            res.append(out)
-        point_out = torch.cat(res, dim=0)
-        point_out = self.norm(point_out)
-        return point_out
-
-
-class DyPointwiseConvAtten(nn.Module):
-    def __init__(self, cfg):
-        super(DyPointwiseConvAtten, self).__init__()
-        self.hidden_dim = cfg.MODEL.YOSO.HIDDEN_DIM
-        self.num_proposals = cfg.MODEL.YOSO.NUM_PROPOSALS
-        self.kernel_size = cfg.MODEL.YOSO.CONV_KERNEL_SIZE_1D
-
-        # self.depth_weight_linear = nn.Linear(hidden_dim, kernel_size)
-        # self.point_weigth_linear = nn.Linear(hidden_dim, num_proposals)
-        self.weight_linear = nn.Linear(self.hidden_dim, self.num_proposals)
-        self.norm = nn.LayerNorm(self.hidden_dim)
-
-    def forward(self, query, value):
-        assert query.shape == value.shape
-        B, N, C = query.shape
-        
-        # dynamic depth-wise conv
-        # dy_depth_conv_weight = self.depth_weight_linear(query).view(B, self.num_proposals, 1,self.kernel_size) # B, N, 1, K
-        # dy_point_conv_weight = self.point_weigth_linear(query).view(B, self.num_proposals, self.num_proposals, 1)
-
-        dy_conv_weight = self.weight_linear(query).view(B,self.num_proposals,self.num_proposals,1)
-
-        res = []
-        value = value.unsqueeze(1)
-        for i in range(B):
-            # input: [1, N, C]
-            # weight: [N, 1, K]
-            # output: [1, N, C]
-            # out = F.relu(F.conv1d(, weight=dy_depth_conv_weight[i], groups=N, padding="same"))
-            # input: [1, N, C]
-            # weight: [N, N, 1]
-            # output: [1, N, C]
-            out = F.conv1d(input=value[i], weight=dy_conv_weight[i], padding='same')
-
-            res.append(out)
-        point_out = torch.cat(res, dim=0)
-        point_out = self.norm(point_out)
-        return point_out
-
+        return features
 
 class CrossAttenHead(nn.Module):
     def __init__(self, cfg):
@@ -232,14 +147,15 @@ class CrossAttenHead(nn.Module):
         self.num_proposals = cfg.MODEL.YOSO.NUM_PROPOSALS
         self.hard_mask_thr = 0.5
 
-        self.f_atten = DySepConvAtten(cfg) # DyPointwiseConvAtten(cfg) #MultiHeadCrossAtten(cfg) #DyConvAtten(cfg) #DyDepthwiseConvAtten(cfg) #
-        self.f_dropout = nn.Dropout(0.0)
-        self.f_atten_norm = nn.LayerNorm(self.hidden_dim * self.conv_kernel_size_2d**2)
+        self.kernel_updator = KernelUpdator(
+            in_channels=256,
+            feat_channels=256,
+            out_channels=256,
+            input_feat_shape=3,
+            act_cfg=dict(type='ReLU', inplace=True),
+            norm_cfg=dict(type='LN')
+        )
 
-        self.k_atten = DySepConvAtten(cfg) # DyPointwiseConvAtten(cfg) #MultiHeadCrossAtten(cfg) #DyConvAtten(cfg) #DyDepthwiseConvAtten(cfg) #
-        self.k_dropout = nn.Dropout(0.0)
-        self.k_atten_norm = nn.LayerNorm(self.hidden_dim * self.conv_kernel_size_2d**2) 
-        
         self.s_atten = nn.MultiheadAttention(embed_dim=self.hidden_dim * self.conv_kernel_size_2d**2,
                                              num_heads=8,
                                              dropout=0.0)
@@ -249,12 +165,14 @@ class CrossAttenHead(nn.Module):
         self.ffn = FFN(self.hidden_dim, feedforward_channels=2048, num_fcs=2)
         self.ffn_norm = nn.LayerNorm(self.hidden_dim)
 
-        self.cls_fcs = nn.ModuleList()
-        for _ in range(self.num_cls_fcs):
-            self.cls_fcs.append(nn.Linear(self.hidden_dim, self.hidden_dim, bias=False))
-            self.cls_fcs.append(nn.LayerNorm(self.hidden_dim))
-            self.cls_fcs.append(nn.ReLU(True))
-        self.fc_cls = nn.Linear(self.hidden_dim, self.num_classes + 1)
+        self.iou_fcs = MLP(256, 256, 1, 3)
+
+        # self.cls_fcs = nn.ModuleList()
+        # for _ in range(self.num_cls_fcs):
+        #     self.cls_fcs.append(nn.Linear(self.hidden_dim, self.hidden_dim, bias=False))
+        #     self.cls_fcs.append(nn.LayerNorm(self.hidden_dim))
+        #     self.cls_fcs.append(nn.ReLU(True))
+        # self.fc_cls = nn.Linear(self.hidden_dim, self.num_classes + 1)
 
         self.mask_fcs = nn.ModuleList()
         for _ in range(self.num_mask_fcs):
@@ -267,7 +185,7 @@ class CrossAttenHead(nn.Module):
         self.bias_value = -math.log((1 - prior_prob) / prior_prob)
 
         self.apply(self._init_weights)
-        nn.init.constant_(self.fc_cls.bias, self.bias_value)
+        # nn.init.constant_(self.fc_cls.bias, self.bias_value)
 
     def _init_weights(self, m):
         # print("init weights")
@@ -279,7 +197,7 @@ class CrossAttenHead(nn.Module):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
-    def forward(self, features, proposal_kernels, mask_preds, train_flag):
+    def forward(self, features, proposal_kernels, mask_preds, self_attn_mask=None):
         B, C, H, W = features.shape
 
         soft_sigmoid_masks = mask_preds.sigmoid()
@@ -288,87 +206,167 @@ class CrossAttenHead(nn.Module):
 
         # [B, N, C]
         f = torch.einsum('bnhw,bchw->bnc', hard_sigmoid_masks, features)
-        # [B, N, C, K, K] -> [B, N, C * K * K]
-        k = proposal_kernels.view(B, self.num_proposals, -1)
+        
+        num_proposals = proposal_kernels.shape[1]
+        k = proposal_kernels.view(B, num_proposals, -1)
 
         # ----
-        f_tmp = self.f_atten(k, f)
-        f = f + self.f_dropout(f_tmp)
-        f = self.f_atten_norm(f)
-
-        f_tmp = self.k_atten(k, f)
-        f = f + self.k_dropout(f_tmp)
-        k = self.k_atten_norm(f)
+        k = self.kernel_updator(f, k)
         # ----
 
         # [N, B, C]
         k = k.permute(1, 0, 2)
 
-        k_tmp = self.s_atten(query = k, key = k, value = k )[0]
+        k_tmp = self.s_atten(query = k, key = k, value = k, attn_mask=self_attn_mask)[0]
         k = k + self.s_dropout(k_tmp)
         k = self.s_atten_norm(k.permute(1, 0, 2))
 
-        # [B, N, C * K * K] -> [B, N, C, K * K] -> [B, N, K * K, C]
-        obj_feat = k.reshape(B, self.num_proposals, self.hidden_dim, -1).permute(0, 1, 3, 2)
+        obj_feat = k.reshape(B, num_proposals, self.hidden_dim)
 
         obj_feat = self.ffn_norm(self.ffn(obj_feat))
 
-        cls_feat = obj_feat.sum(-2)
+        cls_feat = obj_feat
         mask_feat = obj_feat
 
-        if train_flag:
-            for cls_layer in self.cls_fcs:
-                cls_feat = cls_layer(cls_feat)
-            cls_score = self.fc_cls(cls_feat).view(B, self.num_proposals, -1)
-        else:
-            cls_score = None
+        iou_pred = self.iou_fcs(cls_feat).squeeze(-1).view(B, -1, 6)
+        
+        # for cls_layer in self.cls_fcs:
+        #     cls_feat = cls_layer(cls_feat)
+        # cls_score = self.fc_cls(cls_feat).view(B, num_proposals, -1)
+        cls_score = None
 
         for reg_layer in self.mask_fcs:
             mask_feat = reg_layer(mask_feat)
-        # [B, N, K * K, C] -> [B, N, C]
-        mask_kernels = self.fc_mask(mask_feat).squeeze(2)
+        mask_kernels = self.fc_mask(mask_feat)
         new_mask_preds = torch.einsum("bqc,bchw->bqhw", mask_kernels, features)
-        #torch.bmm(mask_kernels, features.view(B, C, H * W)).view(B, self.num_proposals, H, W)
 
-        return cls_score, new_mask_preds, obj_feat.permute(0, 1, 3, 2).reshape(B, self.num_proposals, self.hidden_dim, self.conv_kernel_size_2d, self.conv_kernel_size_2d)
+        return iou_pred, cls_score, new_mask_preds, obj_feat
 
 
 class YOSOHead(nn.Module):
-    def __init__(self, cfg, num_stages, criterion):
+    def __init__(self, cfg, num_stages):
         super(YOSOHead, self).__init__()
+        self.num_all_tokens = 6
+        self.num_mask_tokens = 6
+        self.label_enc = nn.Embedding(2, 256)
+        self.pb_embedding = nn.Embedding(2, 256)
+        self.mask_tokens = nn.Embedding(self.num_mask_tokens, 256)
+        self.pos_linear = nn.Linear(512, 256)
+
         self.num_stages = num_stages
-        self.criterion = criterion
         self.temperature = cfg.MODEL.YOSO.TEMPERATIRE
 
-        self.kernels = nn.Conv2d(in_channels=cfg.MODEL.YOSO.HIDDEN_DIM, out_channels=cfg.MODEL.YOSO.NUM_PROPOSALS, kernel_size=1)
-
+        # self.kernels = nn.Embedding(cfg.MODEL.YOSO.NUM_PROPOSALS, cfg.MODEL.YOSO.HIDDEN_DIM)
         self.mask_heads = nn.ModuleList()
+        
         for _ in range(self.num_stages):
             self.mask_heads.append(CrossAttenHead(cfg))
 
-    def forward(self, features, targets):
-        all_stage_loss = {}
-        for stage in range(self.num_stages + 1):
-            if stage == 0:
-                mask_preds = self.kernels(features)
-                cls_scores = None
-                proposal_kernels = self.kernels.weight.clone()
-                object_kernels = proposal_kernels[None].expand(features.shape[0], *proposal_kernels.size())
-            elif stage == self.num_stages:
-                mask_head = self.mask_heads[stage - 1]
-                cls_scores, mask_preds, proposal_kernels = mask_head(features, object_kernels, mask_preds, True)
-            else:
-                mask_head = self.mask_heads[stage - 1]
-                cls_scores, mask_preds, proposal_kernels = mask_head(features, object_kernels, mask_preds, targets is not None)
-                object_kernels = proposal_kernels
+    def prepare_for_dn_mo(self, targets, tgt, refpoint_emb, batch_size):
+       
+        # scalar, noise_scale = self.dn_num, self.noise_scale
+        scalar, noise_scale = 100, 0.4
 
+        pb_labels = torch.stack([t['pb'] for t in targets])
+        labels = torch.zeros_like(pb_labels).long()
+        boxes = torch.stack([t['boxes_dn'] for t in targets])
+        box_start = [t['box_start'] for t in targets]
+
+        known_labels = labels
+        known_pb_labels = pb_labels
+
+        known_bboxs = boxes
+        known_labels_expaned = known_labels.clone()
+        known_pb_labels_expaned = known_pb_labels.clone()
+        known_bbox_expand = known_bboxs.clone()
+        if noise_scale > 0 and self.training:
+            diff = torch.zeros_like(known_bbox_expand)
+            diff[:, :, :2] = known_bbox_expand[:, :, 2:] / 2
+            diff[:, :, 2:] = known_bbox_expand[:, :, 2:]
+            # add very small noise to input points
+            sc = 0.01
+            for i, st in enumerate(box_start):
+                diff[i, :st] = diff[i, :st] * sc
+            known_bbox_expand += torch.mul((torch.rand_like(known_bbox_expand) * 2 - 1.0), diff).cuda() * noise_scale
+            known_bbox_expand = known_bbox_expand.clamp(min=0.0, max=1.0)
+
+        m = known_labels_expaned.long().to('cuda')
+        m_pb = known_pb_labels_expaned.long().to('cuda')
+        input_label_embed = self.label_enc(m) + self.pb_embedding(m_pb)
+        input_bbox_embed = inverse_sigmoid(known_bbox_expand)
+
+        label_embed = input_label_embed.repeat_interleave(self.num_all_tokens,1)
+        input_label_embed = label_embed + self.mask_tokens.weight.unsqueeze(0).repeat(input_label_embed.shape[0], input_label_embed.shape[1], 1)
+        input_bbox_embed = input_bbox_embed.repeat_interleave(self.num_all_tokens,1)
+
+        single_pad = self.num_all_tokens
+
+        scalar = int(input_label_embed.shape[1]/self.num_all_tokens)
+
+        pad_size = input_label_embed.shape[1]
+
+        if input_label_embed.shape[1]>0:
+            input_query_label = input_label_embed
+            input_query_bbox = input_bbox_embed
+
+        tgt_size = pad_size
+        attn_mask = torch.ones(tgt_size, tgt_size).to('cuda') < 0
+        attn_mask[pad_size:, :pad_size] = True
+        for i in range(scalar):
+            if i == 0:
+                attn_mask[single_pad * i:single_pad * (i + 1), single_pad * (i + 1):pad_size] = True
+            if i == scalar - 1:
+                attn_mask[single_pad * i:single_pad * (i + 1), :single_pad * i] = True
+            else:
+                attn_mask[single_pad * i:single_pad * (i + 1), single_pad * (i + 1):pad_size] = True
+                attn_mask[single_pad * i:single_pad * (i + 1), :single_pad * i] = True
+        mask_dict = {
+            'known_lbs_bboxes': (known_labels, known_bboxs),
+            'pad_size': pad_size,
+            'scalar': scalar,
+        }
+        return input_query_label,input_query_bbox,attn_mask,mask_dict
+
+    def forward(self, features, targets, self_attn_mask=None):
+        
+        input_query_label, input_query_bbox, \
+            tgt_mask, mask_dict = self.prepare_for_dn_mo(targets, None, None, features.shape[0])
+        # object_kernels = self.kernels.weight.repeat(features.shape[0], 1, 1)
+
+        pos_embed = self.pos_linear(gen_sineembed_for_position(input_query_bbox.sigmoid()))
+        object_kernels = input_query_label + pos_embed
+
+        all_stage_cls_preds = []
+        all_stage_mask_preds = []
+        all_stage_iou_preds = []
+        mask_preds = torch.einsum('bnc,bchw->bnhw', object_kernels, features)
+        for stage in range(self.num_stages):
+            mask_head = self.mask_heads[stage]
+            iou_preds, cls_scores, mask_preds, object_kernels = mask_head(
+                features, object_kernels, mask_preds, self_attn_mask)
             if cls_scores is not None:
                 cls_scores = cls_scores / self.temperature
-                
-            if targets is not None:
-                preds = {'pred_logits': cls_scores, 'pred_masks': mask_preds}
-                single_stage_loss = self.criterion(preds, targets)
-                for key, value in single_stage_loss.items():
-                    all_stage_loss[f's{stage}_{key}'] = value
+            all_stage_cls_preds.append(cls_scores)
+            all_stage_mask_preds.append(mask_preds)
+            all_stage_iou_preds.append(iou_preds)
         
-        return all_stage_loss, cls_scores, mask_preds
+        
+        out = {
+            'pred_logits': all_stage_cls_preds[-1],
+            'pred_masks': all_stage_mask_preds[-1],
+            'pred_ious': all_stage_iou_preds[-1],
+            'aux_outputs': self._set_aux_loss(
+                all_stage_cls_preds,
+                all_stage_mask_preds, 
+                all_stage_iou_preds, 
+            )
+        }
+        return out, mask_dict
+
+
+    @torch.jit.unused
+    def _set_aux_loss(self, outputs_class=None, outputs_seg_masks=None, predictions_iou_score=None):
+        return [
+            {"pred_logits": a, "pred_masks": b, "pred_ious":c}
+                for a, b, c in zip(outputs_class[:-1], outputs_seg_masks[:-1], predictions_iou_score[:-1])
+        ]

@@ -15,7 +15,7 @@ from detectron2.utils.file_io import PathManager
 _PREDEFINED_SPLITS_SAM_RAW = {
     "sam_train": (
         "meta_sa",
-        (20,21)
+        (20,30)
     ),
     "sam_minitrain": (
         "meta_sa",

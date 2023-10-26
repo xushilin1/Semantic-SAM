@@ -11,7 +11,7 @@ WEIGHT: ''
 PORT: 53711
 VERBOSE: true
 
-OUTPUT_DIR: '../../data/output/test'
+OUTPUT_DIR: 'output/test'
 # misc
 LOADER:
   JOINT: True
@@ -286,6 +286,7 @@ DATALOADER:
 
 # Detectron2 training config for optimizer and lr scheduler
 SOLVER:
+  RESCALE_INTERVAL: False
   BASE_LR_END: 0.0
   MOMENTUM: 0.9
   NESTEROV: False

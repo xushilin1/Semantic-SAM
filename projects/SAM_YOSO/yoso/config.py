@@ -1,5 +1,91 @@
 from detectron2.config import CfgNode as CN
 
+def add_sam_yoso_config(cfg):
+    cfg.DATASETS.CLASS_CONCAT = False
+    cfg.DATASETS.SIZE_DIVISIBILITY = 32
+    cfg.DATALOADER.LOAD_PROPOSALS = False
+    cfg.SAM=CN()
+    cfg.SAM.INPUT=CN()
+    cfg.SAM.INPUT.MIN_SIZE_TEST = 800
+    cfg.SAM.INPUT.MAX_SIZE_TEST = 1333
+    cfg.SAM.INPUT.IMAGE_SIZE = 1024
+    cfg.SAM.INPUT.MIN_SCALE = 0.99
+    cfg.SAM.INPUT.MAX_SCALE = 1.01
+    cfg.SAM.INPUT.DATASET_MAPPER_NAME = "sam"
+    cfg.SAM.INPUT.IGNORE_VALUE = 255
+    cfg.SAM.INPUT.COLOR_AUG_SSD = False
+    cfg.SAM.INPUT.SIZE_DIVISIBILITY = 32
+    cfg.SAM.INPUT.RANDOM_FLIP = "horizontal"
+    cfg.SAM.INPUT.MASK_FORMAT = "polygon"
+    cfg.SAM.INPUT.FORMAT = "RGB"
+    cfg.SAM.INPUT.CROP = CN()
+    cfg.SAM.INPUT.CROP.ENABLED = True
+    cfg.SAM.DATASET = CN()
+    cfg.SAM.DATASET.DATASET = "sam"
+    cfg.SAM.TEST = CN()
+    cfg.SAM.TEST.DETECTIONS_PER_IMAGE = 100
+    cfg.SAM.TEST.NAME = "coco_eval"
+    cfg.SAM.TEST.IOU_TYPE = ["bbox", "segm"]
+    cfg.SAM.TEST.USE_MULTISCALE = False
+    cfg.SAM.TEST.BATCH_SIZE_TOTAL = 8
+    cfg.SAM.TEST.MODEL_FILE = ""
+    cfg.SAM.TEST.AUG = CN()
+    cfg.SAM.TEST.AUG.ENABLED = False
+    cfg.SAM.TRAIN = CN()
+    cfg.SAM.TRAIN.BATCH_SIZE_TOTAL = 1
+    cfg.SAM.TRAIN.BATCH_SIZE_PER_GPU = 1
+    cfg.SAM.TRAIN.SHUFFLE = True
+    cfg.SAM.DATALOADER = CN()
+    cfg.SAM.DATALOADER.FILTER_EMPTY_ANNOTATIONS = False
+    cfg.SAM.DATALOADER.NUM_WORKERS = 4
+    cfg.SAM.DATALOADER.LOAD_PROPOSALS = False
+    cfg.SAM.DATALOADER.SAMPLER_TRAIN = "TrainingSampler"
+    cfg.SAM.DATALOADER.ASPECT_RATIO_GROUPING = True
+
+
+    cfg.COCO = CN()
+    cfg.COCO.INPUT = CN()
+    cfg.COCO.INPUT.MIN_SIZE_TEST = 800
+    cfg.COCO.INPUT.MAX_SIZE_TEST = 1333
+    cfg.COCO.INPUT.IMAGE_SIZE = 1024
+    cfg.COCO.INPUT.MIN_SCALE = 0.1
+    cfg.COCO.INPUT.MAX_SCALE = 2.0
+    cfg.COCO.INPUT.DATASET_MAPPER_NAME = "coco_interactive_panoptic_lsj"
+    cfg.COCO.INPUT.IGNORE_VALUE = 255
+    cfg.COCO.INPUT.COLOR_AUG_SSD = False
+    cfg.COCO.INPUT.SIZE_DIVISIBILITY = 32
+    cfg.COCO.INPUT.RANDOM_FLIP = "horizontal"
+    cfg.COCO.INPUT.MASK_FORMAT = "polygon"
+    cfg.COCO.INPUT.FORMAT = "RGB"
+    cfg.COCO.INPUT.CROP = CN()
+    cfg.COCO.INPUT.CROP.ENABLED = True
+    cfg.COCO.DATASET = CN()
+    cfg.COCO.DATASET.DATASET = "coco"
+    cfg.COCO.TEST = CN()
+    cfg.COCO.TEST.DETECTIONS_PER_IMAGE = 100
+    cfg.COCO.TEST.NAME = "coco_eval"
+    cfg.COCO.TEST.IOU_TYPE = ["bbox", "segm"]
+    cfg.COCO.TEST.USE_MULTISCALE = False
+    cfg.COCO.TEST.BATCH_SIZE_TOTAL = 8
+    cfg.COCO.TEST.MODEL_FILE = ""
+    cfg.COCO.TEST.AUG = CN()
+    cfg.COCO.TEST.AUG.ENABLED = False
+    cfg.COCO.TRAIN = CN()
+    cfg.COCO.TRAIN.BATCH_SIZE_TOTAL = 1
+    cfg.COCO.TRAIN.BATCH_SIZE_PER_GPU = 1
+    cfg.COCO.TRAIN.SHUFFLE = True
+    cfg.COCO.DATALOADER = CN()
+    cfg.COCO.DATALOADER.FILTER_EMPTY_ANNOTATIONS = False
+    cfg.COCO.DATALOADER.NUM_WORKERS = 4
+    cfg.COCO.DATALOADER.LOAD_PROPOSALS = False
+    cfg.COCO.DATALOADER.SAMPLER_TRAIN = "TrainingSampler"
+    cfg.COCO.DATALOADER.ASPECT_RATIO_GROUPING = True
+
+    cfg.LOADER = CN()
+    cfg.LOADER.JOINT = True
+    cfg.LOADER.KEY_DATASET = 'coco'
+
+    
 def add_yoso_config(cfg):
     cfg.MODEL.YOSO = CN()
     cfg.MODEL.YOSO.SIZE_DIVISIBILITY = 32
@@ -40,11 +126,6 @@ def add_yoso_config(cfg):
     cfg.SOLVER.POLY_LR_POWER = 0.9
     cfg.SOLVER.POLY_LR_CONSTANT_ENDING = 0.0
 
-    cfg.INPUT.DATASET_MAPPER_NAME = "yoso_panoptic_lsj"
-    cfg.INPUT.SIZE_DIVISIBILITY = -1
-    cfg.INPUT.COLOR_AUG_SSD = False
-    cfg.INPUT.CROP.SINGLE_CATEGORY_MAX_AREA = 1.0
-
-    cfg.INPUT.IMAGE_SIZE = 1024
-    cfg.INPUT.MIN_SCALE = 0.1
-    cfg.INPUT.MAX_SCALE = 2.0
+    cfg.INPUT.PIXEL_MEAN=[123.675, 116.280, 103.530]
+    cfg.INPUT.PIXEL_STD=[58.395, 57.120, 57.375]
+    

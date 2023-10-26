@@ -1,9 +1,3 @@
-from .config import add_yoso_config
+from .config import add_yoso_config, add_sam_yoso_config
 from .segmentator import YOSO
-from . import data
-from .data.dataset_mappers.yoso_instance_lsj_dataset_mapper import YOSOInstanceLSJDatasetMapper
-from .data.dataset_mappers.yoso_panoptic_lsj_dataset_mapper import YOSOPanopticLSJDatasetMapper
-from .data.dataset_mappers.yoso_instance_dataset_mapper import YOSOInstanceDatasetMapper
-from .data.dataset_mappers.yoso_panoptic_dataset_mapper import  YOSOPanopticDatasetMapper
-from .data.dataset_mappers.yoso_semantic_dataset_mapper import YOSOSemanticDatasetMapper
 from .utils import build_lr_scheduler, SemanticSegmentorWithTTA

@@ -40,6 +40,7 @@ class DeformLayer(nn.Module):
         nn.init.constant_(self.dcn_offset.bias, 0)
         
         self.dcn_bn = nn.SyncBatchNorm(out_planes) # nn.GroupNorm(64, out_planes) # nn.BatchNorm2d(out_planes) #
+        # self.dcn_bn = nn.BatchNorm2d(out_planes)
         self.up_sample = nn.ConvTranspose2d(in_channels=out_planes,
                                             out_channels=out_planes,
                                             kernel_size=deconv_kernel,
@@ -48,6 +49,7 @@ class DeformLayer(nn.Module):
                                             bias=False)
         self._deconv_init()
         self.up_bn = nn.SyncBatchNorm(out_planes) # nn.GroupNorm(64, out_planes) # nn.BatchNorm2d(out_planes) #
+        # self.up_bn = nn.BatchNorm2d(out_planes)
         self.relu = nn.ReLU()
 
     def forward(self, x):
@@ -144,15 +146,6 @@ class LiteDeformConv(nn.Module):
         x = x5 + x4 + x3 + x2 + self.bias
         
         x = self.output_conv(x)
-
-        # IFA
-        # x5 = F.interpolate(x5, scale_factor=8, align_corners=False, mode='bilinear')
-        # x4 = F.interpolate(x4, scale_factor=4, align_corners=False, mode='bilinear')
-        # x3 = F.interpolate(x3, scale_factor=2, align_corners=False, mode='bilinear')
-        # x_fuse = torch.concat([x5,x4,x3,x2], dim=1)
-        # x_fuse = self.fuse_conv(x_fuse)
-
-        # x = self.output_conv(x_fuse)
 
         return x
 

@@ -432,11 +432,11 @@ class SetCriterionOsPartWholeM2M(nn.Module):
         assert self.dn=='no', 'no dn loss for interactive training'
 
         outputs_without_aux = {k: v for k, v in outputs.items() if k != "aux_outputs"}
-        match_cost = ["cls", "box", "mask"]
+        match_cost = ["cls", "mask"]
         if task == 'det' or task == 'seg_from_teacher':
             match_cost = ["cls", "box"]
         # Retrieve the matching between the outputs of the last layer and the targets
-        if self.dn is not "no" and mask_dict is not None:
+        if self.dn != "no" and mask_dict is not None:
             output_known_lbs_bboxes,num_tgt,single_pad,scalar = self.prep_for_dn(mask_dict)
             exc_idx = []
             for i in range(len(targets)):
@@ -456,7 +456,7 @@ class SetCriterionOsPartWholeM2M(nn.Module):
 
         num_masks = sum(len_level_target_inds)
         num_masks = torch.as_tensor(
-            [num_masks], dtype=torch.float, device=outputs['pred_boxes'].device
+            [num_masks], dtype=torch.float, device=outputs['pred_masks'].device
         )
         if is_dist_avail_and_initialized():
             torch.distributed.all_reduce(num_masks)
