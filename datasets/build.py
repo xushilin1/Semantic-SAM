@@ -33,7 +33,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from .dataset_mappers import (
     SamBaselineDatasetMapperJSON,
-    SamBaselineDatasetMapper,
+    # SamBaselineDatasetMapper,
     COCOInstanceNewBaselineDatasetMapper,
     COCOPanopticNewBaselineDatasetMapper,
     MaskFormerInstanceDatasetMapper,
@@ -414,8 +414,8 @@ def build_train_dataloader(cfg, ):
         # Sam data dataset mapper
         if mapper_name == "sam":
             # print("using SamBaselineDatasetMapperJSON")
-            # mapper = SamBaselineDatasetMapperJSON(cfg, True)
-            mapper = SamBaselineDatasetMapper(cfg, True)
+            mapper = SamBaselineDatasetMapperJSON(cfg, True)
+            # mapper = SamBaselineDatasetMapper(cfg, True)
             loaders['sam'] = build_detection_train_loader(cfg, dataset_name=dataset_name, mapper=mapper)
         elif mapper_name == "pascal_part":
             mapper = MaskFormerInstanceDatasetMapper(cfg, True)
