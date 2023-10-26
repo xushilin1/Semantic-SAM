@@ -15,7 +15,7 @@ from detectron2.utils.file_io import PathManager
 _PREDEFINED_SPLITS_SAM_RAW = {
     "sam_train": (
         "meta_sa",
-        (901,910)
+        (20,21)
     ),
     "sam_minitrain": (
         "meta_sa",
@@ -43,7 +43,7 @@ def load_sam_instances(name: str, dirname: str, id_range: tuple):
     """
     dicts = []
     for id in range(*id_range):
-        subfolder = os.path.join(dirname, 'sa_%06d' % id, 'image_list.da')
+        subfolder = os.path.join(dirname, 'sa_%06d' % id + '_image_list.da')
         dicts += torch.load(subfolder)
     return dicts
 

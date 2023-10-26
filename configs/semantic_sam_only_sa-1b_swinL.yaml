@@ -1,17 +1,9 @@
-# ------------------------------------------------------------------------
-# Semantic SAM
-# Copyright (c) MicroSoft, Inc. and its affiliates.
-# Modified from OpenSeed https://github.com/IDEA-Research/OpenSeed by Feng Li.
-# ------------------------------------------------------------------------
 
-##################
-# Task settings
-##################
 WEIGHT: ''
 PORT: 53711
 VERBOSE: true
 
-OUTPUT_DIR: '../../data/output/test'
+OUTPUT_DIR: 'output/test'
 # misc
 LOADER:
   JOINT: True
@@ -240,39 +232,13 @@ COCO:
     SAMPLER_TRAIN: "TrainingSampler"
     ASPECT_RATIO_GROUPING: True
 
-VLP:
-  INPUT:
-    IMAGE_SIZE: 224
-    DATASET_MAPPER_NAME: "vlpretrain"
-    IGNORE_VALUE: 255
-    COLOR_AUG_SSD: False
-    SIZE_DIVISIBILITY: 32
-    MASK_FORMAT: "polygon"
-    FORMAT: "RGB"
-    CROP:
-      ENABLED: True
-  TRAIN:
-    BATCH_SIZE_TOTAL: 2
-    BATCH_SIZE_PER_GPU: 2
-  TEST:
-    BATCH_SIZE_TOTAL: 256
-  DATALOADER:
-    FILTER_EMPTY_ANNOTATIONS: False
-    NUM_WORKERS: 16
-    LOAD_PROPOSALS: False
-    SAMPLER_TRAIN: "TrainingSampler"
-    ASPECT_RATIO_GROUPING: True
-
 INPUT:
   PIXEL_MEAN: [123.675, 116.280, 103.530]
   PIXEL_STD: [58.395, 57.120, 57.375]
 
 DATASETS:
   TRAIN: ["sam_train"]
-  # interactive segmentation evaluation.
   TEST: ["coco_2017_val_panoptic_with_sem_seg_interactive_jointboxpoint"]
-#  TEST: ["sam_minival"]
-
   CLASS_CONCAT: false
   SIZE_DIVISIBILITY: 32
   PROPOSAL_FILES_TRAIN: []
@@ -286,6 +252,7 @@ DATALOADER:
 
 # Detectron2 training config for optimizer and lr scheduler
 SOLVER:
+  RESCALE_INTERVAL: False
   BASE_LR_END: 0.0
   MOMENTUM: 0.9
   NESTEROV: False
@@ -317,208 +284,3 @@ SOLVER:
     NORM_TYPE: 2.0
   AMP:
     ENABLED: True
-
-# Evaluation Dataset
-ADE20K:
-  INPUT:
-    MIN_SIZE_TRAIN: [320, 384, 448, 512, 576, 640, 704, 768, 832, 896, 960, 1024, 1088, 1152, 1216, 1280]
-    MIN_SIZE_TRAIN_SAMPLING: "choice"
-    MIN_SIZE_TEST: 640
-    MAX_SIZE_TRAIN: 2560
-    MAX_SIZE_TEST: 2560
-    MASK_FORMAT: "polygon"
-    CROP:
-      ENABLED: True
-      TYPE: "absolute"
-      SIZE: [640, 640]
-      SINGLE_CATEGORY_MAX_AREA: 1.0
-    IGNORE_VALUE: 255
-    COLOR_AUG_SSD: True
-    SIZE_DIVISIBILITY: 640  # used in dataset mapper
-    DATASET_MAPPER_NAME: "mask_former_panoptic"
-    FORMAT: "RGB"
-  DATASET:
-    DATASET: 'ade'
-  TRAIN:
-    ASPECT_RATIO_GROUPING: true
-    BATCH_SIZE_TOTAL: 16
-    BATCH_SIZE_PER_GPU: 2
-    SHUFFLE: true
-  TEST:
-    DETECTIONS_PER_IMAGE: 100
-    NAME: coco_eval
-    IOU_TYPE: ['bbox', 'segm']
-    USE_MULTISCALE: false
-    BATCH_SIZE_TOTAL: 8
-    MODEL_FILE: ''
-    AUG:
-      ENABLED: False
-  DATALOADER:
-    FILTER_EMPTY_ANNOTATIONS: False
-    NUM_WORKERS: 8
-    LOAD_PROPOSALS: False
-    SAMPLER_TRAIN: "TrainingSampler"
-    ASPECT_RATIO_GROUPING: True
-#ADE20K:
-#  INPUT:
-#    MIN_SIZE_TRAIN: 640
-#    MIN_SIZE_TRAIN_SAMPLING: "choice"
-#    MIN_SIZE_TEST: 640
-#    MAX_SIZE_TRAIN: 2560
-#    MAX_SIZE_TEST: 2560
-#    MASK_FORMAT: "polygon"
-#    CROP:
-#      ENABLED: True
-#      TYPE: "absolute"
-#      SIZE: (640, 640)
-#      SINGLE_CATEGORY_MAX_AREA: 1.0
-#    COLOR_AUG_SSD: True
-#    SIZE_DIVISIBILITY: 640  # used in dataset mapper
-#    DATASET_MAPPER_NAME: "mask_former_panoptic"
-#    FORMAT: "RGB"
-#  DATASET:
-#    DATASET: 'ade'
-#  TEST:
-#    BATCH_SIZE_TOTAL: 8
-
-
-REF:
-  INPUT:
-    PIXEL_MEAN: [123.675, 116.280, 103.530]
-    PIXEL_STD: [58.395, 57.120, 57.375]
-    MIN_SIZE_TEST: 512
-    MAX_SIZE_TEST: 1024
-    FORMAT: "RGB"
-  DATALOADER:
-    FILTER_EMPTY_ANNOTATIONS: False
-    NUM_WORKERS: 0
-    LOAD_PROPOSALS: False
-    SAMPLER_TRAIN: "TrainingSampler"
-    ASPECT_RATIO_GROUPING: False
-  TEST:
-    BATCH_SIZE_TOTAL: 8
-
-SUN:
-  INPUT:
-    PIXEL_MEAN: [123.675, 116.280, 103.530]
-    PIXEL_STD: [58.395, 57.120, 57.375]
-    MIN_SIZE_TEST: 512
-    MAX_SIZE_TEST: 1024
-  DATALOADER:
-    FILTER_EMPTY_ANNOTATIONS: False
-    NUM_WORKERS: 0
-    LOAD_PROPOSALS: False
-    SAMPLER_TRAIN: "TrainingSampler"
-    ASPECT_RATIO_GROUPING: False
-  TEST:
-    BATCH_SIZE_TOTAL: 8
-
-SCAN:
-  INPUT:
-    PIXEL_MEAN: [123.675, 116.280, 103.530]
-    PIXEL_STD: [58.395, 57.120, 57.375]
-    MIN_SIZE_TEST: 512
-    MAX_SIZE_TEST: 1024
-  DATALOADER:
-    FILTER_EMPTY_ANNOTATIONS: False
-    NUM_WORKERS: 0
-    LOAD_PROPOSALS: False
-    SAMPLER_TRAIN: "TrainingSampler"
-    ASPECT_RATIO_GROUPING: False
-  TEST:
-    BATCH_SIZE_TOTAL: 8
-
-BDD:
-  INPUT:
-    PIXEL_MEAN: [123.675, 116.280, 103.530]
-    PIXEL_STD: [58.395, 57.120, 57.375]
-    MIN_SIZE_TEST: 800
-    MAX_SIZE_TEST: 1333
-  DATALOADER:
-    FILTER_EMPTY_ANNOTATIONS: False
-    NUM_WORKERS: 0
-    LOAD_PROPOSALS: False
-    SAMPLER_TRAIN: "TrainingSampler"
-    ASPECT_RATIO_GROUPING: False
-  TEST:
-    BATCH_SIZE_TOTAL: 8
-
-CITY:
-  INPUT:
-    MIN_SIZE_TRAIN: [ 512, 614, 716, 819, 921, 1024, 1126, 1228, 1331, 1433, 1536, 1638, 1740, 1843, 1945, 2048 ]
-    MIN_SIZE_TRAIN_SAMPLING: "choice"
-    MIN_SIZE_TEST: 1024
-    MAX_SIZE_TRAIN: 4096
-    MAX_SIZE_TEST: 2048
-    CROP:
-      ENABLED: True
-      TYPE: "absolute"
-      SIZE: [ 512, 1024 ]
-      SINGLE_CATEGORY_MAX_AREA: 1.0
-    IGNORE_VALUE: 255
-    COLOR_AUG_SSD: True
-    SIZE_DIVISIBILITY: -1
-    FORMAT: "RGB"
-    DATASET_MAPPER_NAME: "mask_former_panoptic"
-    MASK_FORMAT: "polygon"
-    TEST:
-      EVAL_PERIOD: 5000
-      BATCH_SIZE_TOTAL: 1
-      AUG:
-        ENABLED: False
-        MIN_SIZES: [ 512, 768, 1024, 1280, 1536, 1792 ]
-        MAX_SIZE: 4096
-        FLIP: True
-    DATALOADER:
-      FILTER_EMPTY_ANNOTATIONS: True
-      NUM_WORKERS: 2
-      LOAD_PROPOSALS: False
-      SAMPLER_TRAIN: "TrainingSampler"
-      ASPECT_RATIO_GROUPING: True
-    TRAIN:
-      ASPECT_RATIO_GROUPING: true
-      BATCH_SIZE_TOTAL: 2
-      BATCH_SIZE_PER_GPU: 2
-      SHUFFLE: true
-
-PSACAL_PART:
-  INPUT:
-      MIN_SIZE_TEST: 800
-      MAX_SIZE_TEST: 1333
-      IMAGE_SIZE: 1024
-      MIN_SCALE: 0.1
-      MAX_SCALE: 2.0
-      DATASET_MAPPER_NAME: "pascal_part_lsj"
-      IGNORE_VALUE: 255
-      COLOR_AUG_SSD: False
-      SIZE_DIVISIBILITY: 32
-      RANDOM_FLIP: "horizontal"
-      MASK_FORMAT: "polygon"
-      FORMAT: "RGB"
-      CROP:
-        ENABLED: True
-  MODEL:
-    MASK_ON: True
-    KEYPOINT_ON: False
-    LOAD_PROPOSALS: False
-  # DATASET:
-  #   DATASET: 'coco'
-  TEST:
-    DETECTIONS_PER_IMAGE: 100
-    NAME: coco_eval
-    IOU_TYPE: ['bbox', 'segm']
-    USE_MULTISCALE: false
-    BATCH_SIZE_TOTAL: 8
-    MODEL_FILE: ''
-    AUG:
-      ENABLED: False
-  TRAIN:
-    BATCH_SIZE_TOTAL: 1
-    BATCH_SIZE_PER_GPU: 1
-    SHUFFLE: true
-  DATALOADER:
-    FILTER_EMPTY_ANNOTATIONS: False
-    NUM_WORKERS: 2
-    LOAD_PROPOSALS: False
-    SAMPLER_TRAIN: "TrainingSampler"
-    ASPECT_RATIO_GROUPING: True
